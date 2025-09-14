@@ -1,201 +1,191 @@
-# train_model_daily.py
+import os
 import pandas as pd
 import numpy as np
+import pickle
+import matplotlib.pyplot as plt
 from sklearn.preprocessing import MinMaxScaler
-from sklearn.metrics import mean_absolute_error, mean_squared_error
-from tensorflow.keras.models import Sequential, save_model
-from tensorflow.keras.layers import LSTM, Dense, Dropout
+from sklearn.metrics import (
+    mean_squared_error, 
+    mean_absolute_error, 
+    r2_score
+)
+from tensorflow.keras.models import Sequential, load_model
+from tensorflow.keras.layers import LSTM, Dense, Dropout, Reshape
 from tensorflow.keras.callbacks import EarlyStopping
 from tensorflow.keras.optimizers import Adam
-import matplotlib.pyplot as plt
-import os
 
-# Configuration
-LOOKBACK = 60
-EPOCHS = 50
-BATCH_SIZE = 32
-TEST_SIZE = 0.2
-FREQUENCY = 'daily'
+# --- Configuration ---
+# -----------------------------------------------------------------------------
+COINS = ['ADA', 'BNB', 'BTC', 'ETC', 'ETH', 'LINK', 'LTC', 'SOL', 'USDT', 'XMR'] 
+FREQUENCY = 'DAILY'
+SEQUENCE_LENGTH = 90  # 90 days of daily data
+FORECAST_HORIZON = 30 # Predict the next 30 days
 
-# LIST OF COINS TO TRAIN
-COINS_TO_TRAIN = ['ETC', 'BTC', 'ETH']  # Edit this list
+# --- Directory Paths ---
+# -----------------------------------------------------------------------------
+DATA_DIR = os.path.join('data', FREQUENCY)
+MODEL_DIR = os.path.join('model', FREQUENCY)
+PLOT_DIR = os.path.join('plot', FREQUENCY)
+COLUMNS_TO_PREDICT = ['price_open', 'price_high', 'price_low', 'price_close', 'volume']
+NUM_FEATURES = len(COLUMNS_TO_PREDICT)
 
-def load_data(coin):
-    """Load daily coin data"""
-    file_path = f'data/daily/{coin}-INR_DAILY.csv'
-    df = pd.read_csv(file_path)
-    
-    if 'date' in df.columns:
-        df['date'] = pd.to_datetime(df['date'])
-    elif 'timestamp' in df.columns:
-        df['date'] = pd.to_datetime(df['timestamp'], unit='s')
-    else:
-        df['date'] = pd.date_range(start='2016-01-01', periods=len(df), freq='D')
-    
-    return df
+# --- Helper Functions ---
+# -----------------------------------------------------------------------------
+def create_directories():
+    """Creates the necessary output directories if they don't exist."""
+    os.makedirs(MODEL_DIR, exist_ok=True)
+    os.makedirs(PLOT_DIR, exist_ok=True)
+    for coin in COINS:
+        os.makedirs(os.path.join(PLOT_DIR, coin), exist_ok=True)
+    print("Output directories created/verified.")
 
-def create_model():
-    """Create LSTM model"""
-    model = Sequential([
-        LSTM(100, return_sequences=True, input_shape=(LOOKBACK, 1)),
-        Dropout(0.3),
-        LSTM(50, return_sequences=False),
-        Dropout(0.3),
-        Dense(25, activation='relu'),
-        Dropout(0.2),
-        Dense(1)
-    ])
-    model.compile(optimizer=Adam(learning_rate=0.001), loss='mse')
-    return model
-
-def prepare_sequences(data, lookback):
-    """Create sequences"""
+def create_sequences(data, sequence_length, forecast_horizon):
+    """
+    Creates sequences for a multivariate regression model.
+    X: Input features for the lookback period.
+    y: Regression targets (all features) for the forecast horizon.
+    """
     X, y = [], []
-    for i in range(lookback, len(data)):
-        X.append(data[i-lookback:i])
-        y.append(data[i])
+    for i in range(len(data) - sequence_length - forecast_horizon + 1):
+        X.append(data[i:(i + sequence_length)])
+        y.append(data[i + sequence_length : i + sequence_length + forecast_horizon])
+        
     return np.array(X), np.array(y)
 
-def plot_results(coin, df, train_pred, test_pred, split_idx, metrics):
-    """Create plots for daily data"""
-    os.makedirs(f'plots/{FREQUENCY}', exist_ok=True)
+def calculate_mape(y_true, y_pred):
+    """Calculates Mean Absolute Percentage Error, handling potential zeros in y_true."""
+    y_true, y_pred = np.array(y_true), np.array(y_pred)
+    # Avoid division by zero
+    mask = y_true != 0
+    return np.mean(np.abs((y_true[mask] - y_pred[mask]) / y_true[mask])) * 100
+
+def build_multivariate_model(input_shape):
+    """
+    Builds the multivariate LSTM model using the best hyperparameters found from tuning.
+    """
+    # Best hyperparameters from tuner search:
+    # - lstm1_units: 192
+    # - lstm2_units: 96
+    # - dropout: 0.3
+    # - dense_units: 32
+    # - learning_rate: 0.001
     
-    dates = df['date'].values
-    train_start_idx = LOOKBACK
-    train_end_idx = split_idx
-    test_start_idx = split_idx
+    model = Sequential([
+        LSTM(192, return_sequences=True, input_shape=input_shape),
+        Dropout(0.3),
+        LSTM(96, return_sequences=False),
+        Dropout(0.3),
+        Dense(32, activation='relu'),
+        # The output needs to be flattened first before being reshaped
+        Dense(FORECAST_HORIZON * NUM_FEATURES),
+        Reshape((FORECAST_HORIZON, NUM_FEATURES))
+    ])
     
-    train_pred_dates = dates[train_start_idx:train_end_idx]
-    test_pred_dates = dates[test_start_idx:test_start_idx + len(test_pred)]
+    model.compile(
+        optimizer=Adam(learning_rate=0.001),
+        loss='mean_squared_error'
+    )
+    return model
+
+# --- Main Training Function ---
+# -----------------------------------------------------------------------------
+def train_model_for_coin(coin_symbol):
+    print(f"\n--- Starting DAILY Multivariate Process for {coin_symbol} ---")
+
+    # 1. Load and Prepare Data
+    csv_path = os.path.join(DATA_DIR, f'{coin_symbol}-INR_{FREQUENCY}.csv')
+    if not os.path.exists(csv_path):
+        print(f"Data file not found for {coin_symbol}. Skipping.")
+        return
+
+    df = pd.read_csv(csv_path, parse_dates=['date'], index_col='date')
+    columns_to_drop = ['crypto_symbol', 'currency', 'total_index_updates', 'unit', 'market', 'instrument', 'data_type', 'timestamp', 'quote_volume']
+    df.drop(columns=columns_to_drop, inplace=True, errors='ignore')
     
-    train_pred = train_pred[:len(train_pred_dates)]
-    test_pred = test_pred[:len(test_pred_dates)]
+    # Ensure columns are in a consistent order and drop any remaining NaNs
+    df = df[COLUMNS_TO_PREDICT].dropna()
+
+    # 2. Scale Data
+    scaler = MinMaxScaler()
+    scaled_features = scaler.fit_transform(df)
+
+    scaler_path = os.path.join(MODEL_DIR, f'{coin_symbol}_scaler.pkl')
+    with open(scaler_path, 'wb') as f: pickle.dump(scaler, f)
+    print(f"Scaler saved to {scaler_path}")
+
+    # 3. Create Sequences
+    X, y = create_sequences(scaled_features, SEQUENCE_LENGTH, FORECAST_HORIZON)
+    if len(X) == 0:
+        print(f"Not enough data to create sequences for {coin_symbol}. Skipping.")
+        return
+
+    # 4. Split Data
+    split_index = int(len(X) * 0.8)
+    X_train, X_test = X[:split_index], X[split_index:]
+    y_train, y_test = y[:split_index], y[split_index:]
+
+    # 5. Build and Train Model
+    model = build_multivariate_model(input_shape=(X_train.shape[1], X_train.shape[2]))
+    early_stopping = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)
+
+    print(f"Training daily multivariate model for {coin_symbol}...")
+    history = model.fit(
+        X_train, y_train,
+        epochs=25, # Increased epochs for daily data
+        batch_size=32, 
+        validation_split=0.1,
+        callbacks=[early_stopping], 
+        verbose=1
+    )
+
+    model_path = os.path.join(MODEL_DIR, f'{coin_symbol}_model.h5')
+    model.save(model_path)
+    print(f"Model saved to {model_path}")
+
+    # 6. Evaluate Model
+    predictions_scaled = model.predict(X_test)
+
+    # Inverse transform regression predictions
+    predictions_inv = scaler.inverse_transform(predictions_scaled.reshape(-1, NUM_FEATURES)).reshape(predictions_scaled.shape)
+    y_test_inv = scaler.inverse_transform(y_test.reshape(-1, NUM_FEATURES)).reshape(y_test.shape)
     
-    plt.figure(figsize=(15, 10))
-    plt.subplot(2, 1, 1)
-    plt.plot(dates, df['price_close'], label='Actual', color='blue', alpha=0.7)
-    plt.plot(train_pred_dates, train_pred.flatten(), label='Train Predicted', color='green', alpha=0.7)
-    plt.plot(test_pred_dates, test_pred.flatten(), label='Test Predicted', color='red', alpha=0.7)
-    plt.axvline(x=dates[split_idx], color='black', linestyle='--', label='Train/Test Split')
-    plt.title(f'{coin} Daily Price Prediction\nTest MAE: {metrics["test_mae"]:.2f}')
-    plt.xlabel('Date')
+    # 7. Save Results and Plots
+    coin_plot_dir = os.path.join(PLOT_DIR, coin_symbol)
+    
+    # --- Evaluation (on 'price_close', which is the 4th column, index 3) ---
+    close_price_actual = y_test_inv[:, :, 3]
+    close_price_pred = predictions_inv[:, :, 3]
+
+    rmse = np.sqrt(mean_squared_error(close_price_actual, close_price_pred))
+    mae = mean_absolute_error(close_price_actual, close_price_pred)
+    mape = calculate_mape(close_price_actual, close_price_pred)
+    r2 = r2_score(close_price_actual, close_price_pred)
+    
+    with open(os.path.join(coin_plot_dir, 'regression_metrics.txt'), 'w') as f:
+        f.write(f'--- Regression Metrics for price_close ---\n')
+        f.write(f'Root Mean Squared Error (RMSE): {rmse}\n')
+        f.write(f'Mean Absolute Error (MAE): {mae}\n')
+        f.write(f'Mean Absolute Percentage Error (MAPE): {mape:.2f}%\n')
+        f.write(f'R-squared (R2): {r2}\n')
+
+    # Plot Price Prediction
+    plt.figure(figsize=(15, 7))
+    plt.plot(close_price_actual[:, 0], color='blue', label='Actual Price (First Day of Forecast)')
+    plt.plot(close_price_pred[:, 0], color='red', label='Predicted Price (First Day of Forecast)', alpha=0.7)
+    plt.title(f'{coin_symbol}-INR Daily Close Price Prediction (Test Set)')
+    plt.xlabel('Time Step')
     plt.ylabel('Price (INR)')
     plt.legend()
-    plt.grid(True, alpha=0.3)
-    
-    plt.subplot(2, 1, 2)
-    test_actual = df['price_close'].values[test_start_idx:test_start_idx + len(test_pred)]
-    test_actual_dates = dates[test_start_idx:test_start_idx + len(test_pred)]
-    
-    plt.plot(test_actual_dates, test_actual, label='Actual', color='blue', alpha=0.7)
-    plt.plot(test_actual_dates, test_pred.flatten(), label='Predicted', color='red', alpha=0.7)
-    plt.title('Test Set Zoom')
-    plt.xlabel('Date')
-    plt.ylabel('Price (INR)')
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    
-    plt.tight_layout()
-    plt.savefig(f'plots/{FREQUENCY}/{coin}_prediction.png', dpi=300, bbox_inches='tight')
+    plt.grid(True)
+    plt.savefig(os.path.join(coin_plot_dir, 'price_prediction.png'))
     plt.close()
 
-def train_coin(coin):
-    """Train model for a single coin"""
-    print(f"\n=== Training {coin} ({FREQUENCY}) ===")
-    
-    try:
-        df = load_data(coin)
-        prices = df['price_close'].values
-        
-        if len(prices) < LOOKBACK + 100:
-            print(f"Skip {coin}: Not enough data")
-            return None
-        
-        print(f"Loaded {len(prices)} price points")
-        
-        scaler = MinMaxScaler(feature_range=(0, 1))
-        scaled_prices = scaler.fit_transform(prices.reshape(-1, 1)).flatten()
-        
-        split_idx = int(len(scaled_prices) * (1 - TEST_SIZE))
-        train_data = scaled_prices[:split_idx]
-        test_data = scaled_prices[split_idx - LOOKBACK:]
-        
-        X_train, y_train = prepare_sequences(train_data, LOOKBACK)
-        X_test, y_test = prepare_sequences(test_data, LOOKBACK)
-        
-        X_train = X_train.reshape(X_train.shape[0], LOOKBACK, 1)
-        X_test = X_test.reshape(X_test.shape[0], LOOKBACK, 1)
-        
-        print(f"Train: {X_train.shape[0]} samples, Test: {X_test.shape[0]} samples")
-        
-        model = create_model()
-        early_stop = EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
-        
-        history = model.fit(
-            X_train, y_train,
-            epochs=EPOCHS,
-            batch_size=BATCH_SIZE,
-            validation_data=(X_test, y_test),
-            callbacks=[early_stop],
-            verbose=1,
-            shuffle=False
-        )
-        
-        train_pred = model.predict(X_train, verbose=0)
-        test_pred = model.predict(X_test, verbose=0)
-        
-        train_pred = scaler.inverse_transform(train_pred)
-        test_pred = scaler.inverse_transform(test_pred)
-        y_train_actual = scaler.inverse_transform(y_train.reshape(-1, 1))
-        y_test_actual = scaler.inverse_transform(y_test.reshape(-1, 1))
-        
-        metrics = {
-            'train_mae': mean_absolute_error(y_train_actual, train_pred),
-            'test_mae': mean_absolute_error(y_test_actual, test_pred),
-            'train_rmse': np.sqrt(mean_squared_error(y_train_actual, train_pred)),
-            'test_rmse': np.sqrt(mean_squared_error(y_test_actual, test_pred)),
-            'history': history
-        }
-        
-        print(f"\n{coin} Results:")
-        print(f"Train MAE: {metrics['train_mae']:.2f}, RMSE: {metrics['train_rmse']:.2f}")
-        print(f"Test MAE:  {metrics['test_mae']:.2f}, RMSE:  {metrics['test_rmse']:.2f}")
-        
-        plot_results(coin, df, train_pred, test_pred, split_idx, metrics)
-        
-        os.makedirs(f'models/{FREQUENCY}', exist_ok=True)
-        model.save(f'models/{FREQUENCY}/{coin}_model.h5')
-        print(f"✓ Model saved: models/{FREQUENCY}/{coin}_model.h5")
-        
-        return {'coin': coin, **metrics}
-        
-    except Exception as e:
-        print(f"✗ Error: {str(e)}")
-        return None
+    print(f"Evaluation complete for {coin_symbol}. Metrics and plots saved.")
 
-def main():
-    """Main function"""
-    print(f"Training {FREQUENCY} data...")
-    print(f"Coins: {COINS_TO_TRAIN}")
-    
-    results = []
-    for coin in COINS_TO_TRAIN:
-        result = train_coin(coin)
-        if result:
-            results.append(result)
-    
-    if results:
-        print(f"\n{'='*80}")
-        print(f"DAILY RESULTS SUMMARY")
-        print(f"{'='*80}")
-        print(f"{'Coin':<6} {'Train MAE':<10} {'Test MAE':<10} {'Train RMSE':<10} {'Test RMSE':<10}")
-        print(f"{'-'*80}")
-        
-        for res in results:
-            print(f"{res['coin']:<6} {res['train_mae']:<10.2f} {res['test_mae']:<10.2f} "
-                  f"{res['train_rmse']:<10.2f} {res['test_rmse']:<10.2f}")
-    
-    print(f"\nComplete! Successful: {len(results)}/{len(COINS_TO_TRAIN)}")
-
-if __name__ == "__main__":
-    main()
+# --- Main Execution ---
+# -----------------------------------------------------------------------------
+if __name__ == '__main__':
+    create_directories()
+    for coin in COINS:
+        train_model_for_coin(coin)
+    print("\n--- All training processes complete. ---")

@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Predictions - FutureCoin</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar">
+        <div class="nav-container">
+            <div class="nav-logo">
+                <i class="fas fa-chart-line"></i>
+                <span>FutureCoin</span>
+            </div>
+            <ul class="nav-menu">
+                <li class="nav-item">
+                    <a href="index.html" class="nav-link">Home</a>
+                </li>
+                <li class="nav-item">
+                    <a href="predictions.html" class="nav-link active">Predictions</a>
+                </li>
+                <li class="nav-item">
+                    <a href="about.html" class="nav-link">About</a>
+                </li>
+            </ul>
+            <div class="hamburger">
+                <span class="bar"></span>
+                <span class="bar"></span>
+                <span class="bar"></span>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <div class="container">
+            <div class="page-header">
+                <h1>Cryptocurrency Predictions</h1>
+                <p>Analyze historical performance and generate new forecasts using our AI models</p>
+            </div>
+
+            <!-- Controls Section -->
+            <div class="controls-section">
+                <div class="control-group">
+                    <label for="crypto-select">Select Cryptocurrency:</label>
+                    <select id="crypto-select" class="crypto-dropdown">
+                        <option value="BTC">
+                            <span>₿ Bitcoin (BTC)</span>
+                        </option>
+                        <option value="ETC">
+                            <span>⟠ Ethereum Classic (ETC)</span>
+                        </option>
+                        <option value="LINK">
+                            <span>🔗 Chainlink (LINK)</span>
+                        </option>
+                        <option value="LTC">
+                            <span>Ł Litecoin (LTC)</span>
+                        </option>
+                    </select>
+                </div>
+
+                <div class="control-group">
+                    <label>Timeframe:</label>
+                    <div class="timeframe-toggle">
+                        <button id="hourly-btn" class="toggle-btn active" data-timeframe="hourly">
+                            <i class="fas fa-clock"></i> Hourly
+                        </button>
+                        <button id="daily-btn" class="toggle-btn" data-timeframe="daily">
+                            <i class="fas fa-calendar-day"></i> Daily
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Chart Display -->
+            <div class="chart-section">
+                <div class="chart-container">
+                    <div class="chart-header">
+                        <h3 id="chart-title">Bitcoin (BTC) - Hourly Predictions</h3>
+                        <div class="chart-legend">
+                            <div class="legend-item">
+                                <span class="legend-color actual"></span>
+                                <span>Actual Price (INR)</span>
+                            </div>
+                            <div class="legend-item">
+                                <span class="legend-color predicted"></span>
+                                <span>Predicted Price (INR)</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="chart-wrapper">
+                        <canvas id="predictionChart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Live Forecast Card -->
+            <div class="forecast-section">
+                <div class="forecast-card">
+                    <h3>Generate a New Forecast</h3>
+                    <p>Enter the current price to get AI-powered predictions</p>
+                    
+                    <div class="forecast-inputs">
+                        <div class="input-group">
+                            <label for="current-price">Current Price (INR):</label>
+                            <div class="input-wrapper">
+                                <span class="currency-symbol">₹</span>
+                                <input type="number" id="current-price" placeholder="Enter current price" step="0.01" min="0">
+                            </div>
+                        </div>
+                        
+                        <button id="forecast-btn" class="forecast-button">
+                            <i class="fas fa-magic"></i>
+                            <span id="forecast-btn-text">Forecast Next 2 Hours</span>
+                        </button>
+                    </div>
+
+                    <div id="forecast-result" class="forecast-result hidden">
+                        <div class="result-header">
+                            <h4>Forecast Results</h4>
+                            <div id="trend-indicator" class="trend-indicator">
+                                <i class="fas fa-arrow-up"></i>
+                                <span>Bullish Trend</span>
+                            </div>
+                        </div>
+                        <div class="result-content">
+                            <div class="prediction-item">
+                                <span class="prediction-label">Next Period:</span>
+                                <span id="prediction-1" class="prediction-value">₹0.00</span>
+                            </div>
+                            <div class="prediction-item">
+                                <span class="prediction-label">Second Period:</span>
+                                <span id="prediction-2" class="prediction-value">₹0.00</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-content">
+                <p>&copy; 2025 FutureCoin. Built with AI and passion for crypto forecasting.</p>
+                <div class="footer-links">
+                    <a href="https://github.com" target="_blank">
+                        <i class="fab fa-github"></i> GitHub
+                    </a>
+                    <a href="mailto:contact@futurecoin.com">
+                        <i class="fas fa-envelope"></i> Contact
+                    </a>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="main.js"></script>
+</body>
+</html>
